@@ -1,0 +1,32 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { splitSections,serializeSections,deriveVariant,resolveVariant,documentHTML,documentTex,parseBlocks,DEFAULT_STYLE } from '../lib/document.mjs';
+import { seed } from './fixtures.mjs';
+import { exportDocument,engines } from '../lib/export.mjs';
+const base='# 테스트 사용자\n\n<!-- section: profile -->\n## 프로필\n\n원본 소개\n\n<!-- section: work -->\n## 경력\n\n원본 경력\n';
+const profile={name:'테스트 사용자',email:'test@example.com',phone:'010-0000-0000',github:'https://github.com/test',blog:'https://example.com'};
+test('section IDs survive heading renames and deterministic serialization',()=>{const sections=splitSections(base);sections[0].title='소개';const md=serializeSections(sections);assert.equal(splitSections(md)[0].id,'profile');assert.equal(serializeSections(splitSections(md)),md);});
+test('duplicate IDs are rejected',()=>assert.throws(()=>splitSections(base+'\n<!-- section: profile -->\n## 기타\n내용'),/중복/));
+test('common edits propagate only to inherited sections',()=>{const custom=base.replace('원본 소개','회사별 소개');const variant=deriveVariant(base,custom);const newBase=base.replace('원본 소개','새 공통 소개').replace('원본 경력','새 공통 경력');const result=resolveVariant(newBase,variant);assert.equal(result[0].body,'회사별 소개');assert.equal(result[1].body,'새 공통 경력');assert.equal(result[0].baseChanged,true);assert.equal(result[1].custom,false);});
+test('saving an unchanged override does not silently acknowledge changed common text',()=>{const variant=deriveVariant(base,base.replace('원본 소개','회사별 소개'));const newer=base.replace('원본 소개','새 공통 소개');const unchanged=deriveVariant(newer,serializeSections(resolveVariant(newer,variant)),variant);assert.equal(resolveVariant(newer,unchanged)[0].baseChanged,true);});
+test('new shared sections are inherited; deleted company sections stay excluded',()=>{const variant=deriveVariant(base,serializeSections(splitSections(base).slice(0,1)));const newer=base+'\n<!-- section: tech -->\n## 기술\n\nJava';const result=resolveVariant(newer,variant);assert.deepEqual(result.map(s=>s.id),['profile','tech']);});
+test('XSS is escaped and unsafe links become text',()=>{const md='# 테스트 사용자\n\n## 소개\n\n<script>alert(1)</script> [실행](javascript:alert)';const html=documentHTML(md,profile,'이력서');assert.ok(!html.includes('<script>'));assert.ok(html.includes('&lt;script&gt;'));assert.ok(!html.includes('href="javascript:'));});
+test('TeX escapes user text and is byte deterministic',()=>{const md='# 테스트 사용자\n\n## 소개\n\n비용 $2,000 & 절감 70% _ # {x} \\input';const one=documentTex(md,profile,'공통 이력서');assert.equal(one,documentTex(md,profile,'공통 이력서'));assert.ok(one.includes('70\\%'));assert.ok(one.includes('\\textbackslash{}input'));assert.ok(one.includes('\\&'));});
+test('employment dates and pagebreaks use the same AST in both renderers',()=>{const blocks=parseBlocks('### 예시테크 | Head of Engineering\n\n2022.05 – 2025.11\n\n- 성과\n\n<!-- pagebreak -->');assert.deepEqual(blocks.map(b=>b.type),['employment','ul','pagebreak']);assert.equal(blocks[0].date,'2022.05 – 2025.11');});
+test('store persists variants, rejects stale versions, restores history and produces PDF',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'outline-test-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));const store=await seed(root);
+ const common=await store.document('common','resume');const company=await store.createCompany({name:'검증 회사',role:'플랫폼 개발'});
+ let variant=await store.document(company.id,'resume');assert.equal(variant.customized,0);
+ const section=splitSections(variant.markdown)[0];variant=await store.save(company.id,'resume',variant.markdown.replace(section.body,'회사별 소개'),variant.version);assert.equal(variant.customized,1);
+ const changed=await store.save('common','resume',common.markdown.replace('백엔드 개발과','새로운 백엔드 개발과'),common.version);assert.notEqual(changed.version,common.version);
+ await assert.rejects(store.save('common','resume',common.markdown,common.version),e=>e.status===409);
+ variant=await store.document(company.id,'resume');assert.equal(variant.baseChanged,1);assert.ok(variant.markdown.includes('회사별 소개'));
+ variant=await store.reset(company.id,'resume',section.id,variant.version);assert.equal(variant.customized,0);assert.ok(variant.markdown.includes('새로운 백엔드 개발과'));
+ assert.ok((await store.history('common','resume')).length>=1);
+ assert.ok(await fs.readFile(path.join(root,'common','이력서.tex'),'utf8'));
+ assert.throws(()=>store.companyPath('../escape'));
+ if((await engines()).native){const result=await exportDocument(store,'common','resume','pdf',changed.version);const file=path.join(root,'builds',result.hash,'document.pdf');const pdf=await fs.readFile(file);assert.equal(pdf.subarray(0,5).toString(),'%PDF-');assert.ok(pdf.length>10000);await fs.unlink(file);const again=await exportDocument(store,'common','resume','pdf',changed.version);assert.equal(result.hash,again.hash);assert.deepEqual(pdf,await fs.readFile(file));}
+});

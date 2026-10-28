@@ -1,0 +1,39 @@
+{
+  "name": "outline",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first career workspace with AI-assisted resumes and personal pages",
+  "scripts": {
+    "dev": "node server.mjs",
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "build:documents": "node scripts/build.mjs",
+    "mcp": "node mcp.mjs",
+    "check:agent": "node scripts/check-codex.mjs",
+    "check:ui": "node scripts/check-agent-ui.mjs",
+    "codex": "node scripts/sdk-cli.mjs codex",
+    "claude": "node scripts/sdk-cli.mjs claude",
+    "check:release": "node scripts/check-release.mjs",
+    "release:archive": "node scripts/release-archive.mjs"
+  },
+  "engines": {
+    "node": ">=20.16.0 <21 || >=22.3.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.312",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@openai/codex": "^0.165.0",
+    "@openai/codex-sdk": "^0.165.0",
+    "ipaddr.js": "^2.5.0",
+    "linkedom": "^0.18.14",
+    "mammoth": "^1.13.0",
+    "pdf-parse": "^2.4.5",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "happy-dom": "^21.0.4",
+    "playwright": "^1.64.1"
+  },
+  "license": "MIT"
+}

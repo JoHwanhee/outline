@@ -1,0 +1,7 @@
+# Optional override: mkdir -p ./outline-data first, then use both compose files.
+services:
+  outline:
+    volumes:
+      - type: bind
+        source: ${OUTLINE_DATA_PATH:-./outline-data}
+        target: /app/data

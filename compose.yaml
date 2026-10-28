@@ -1,0 +1,31 @@
+services:
+  outline:
+    build: .
+    image: outline-local:latest
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${OUTLINE_PORT:-4317}:4317"
+    environment:
+      HOST: 0.0.0.0
+      PORT: "4317"
+      OUTLINE_CONTAINER: "1"
+      OUTLINE_DATA_DIR: /app/data
+      OUTLINE_PYTHON: /opt/outline-venv/bin/python
+      OUTLINE_ORIGINS: "http://127.0.0.1:${OUTLINE_PORT:-4317},http://localhost:${OUTLINE_PORT:-4317}"
+      CODEX_HOME: /home/node/.codex
+      CLAUDE_CONFIG_DIR: /home/node/.claude
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - outline_data:/app/data
+      - outline_sdk_home:/home/node
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+volumes:
+  outline_data:
+  outline_sdk_home:
