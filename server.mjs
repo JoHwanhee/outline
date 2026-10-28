@@ -1,3 +1,4 @@
+import {PdfTemplates,validateTemplateStyle} from './lib/pdf-templates.mjs';
 import http from 'node:http';
 import { promises as fs, watch } from 'node:fs';
 import path from 'node:path';
@@ -16,6 +17,7 @@ const root=path.dirname(fileURLToPath(import.meta.url));
 const dataRoot=path.resolve(process.env.OUTLINE_DATA_DIR||process.env.RESUME_DATA_DIR||path.join(root,'data'));
 const store=await seed(dataRoot);await store.materializeAll();
 const introPage=new IntroPage(store);
+const pdfTemplates=new PdfTemplates(store);
 const knowledge=new Knowledge(store);await knowledge.bootstrap();
 export const providers=new Providers(store);
 const setup=new Setup(store,knowledge,providers);
@@ -70,6 +72,12 @@ export async function requestHandler(req,res){
   if(p==='/api/intro-page'&&req.method==='GET')return json(res,await introPage.info());
   if(p==='/api/intro-page/generate'&&req.method==='POST'){const b=await body(req);return json(res,await exclusive(()=>introPage.generate(b)),201);}
   if(['/api/intro-page/preview','/api/intro-page/download'].includes(p)&&req.method==='GET'){const artifact=await introPage.artifact();res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",...(p.endsWith('/download')?{'Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(artifact.filename)}`}:{})});return res.end(artifact.html);}
+  if(p==='/api/pdf-templates'&&req.method==='GET')return json(res,await pdfTemplates.catalog());
+  if(p==='/api/pdf-templates'&&req.method==='POST'){const b=await body(req);const result=await exclusive(()=>pdfTemplates.save(b));changed();return json(res,result,201);}
+  if(p==='/api/pdf-templates/selection'&&req.method==='PUT'){const b=await body(req);const result=await exclusive(()=>pdfTemplates.select(b));changed();return json(res,result);}
+  if(p==='/api/pdf-templates/preview'&&req.method==='POST'){const b=await body(req),style=validateTemplateStyle(b.style);return json(res,await exportDocument(store,b.target||'common',b.doc||'resume','pdf',b.version,'native',{style,preview:true}));}
+  const templateMatch=p.match(/^\/api\/pdf-templates\/([a-f0-9-]{36})$/);
+  if(templateMatch&&req.method==='PUT'){const b=await body(req);const result=await exclusive(()=>pdfTemplates.save(b,templateMatch[1]));changed();return json(res,result);}
   if(p==='/api/state'&&req.method==='GET')return json(res,{app:'outline',setup:await setup.status(),runtime:{container:process.env.OUTLINE_CONTAINER==='1'},profile:await store.profile(),settings:await store.settings(),companies:await store.companies(),engines:Object.fromEntries(Object.entries(await engines()).map(([k,v])=>[k,!!v])),dataRoot});
   if(p==='/api/document'&&req.method==='GET')return json(res,await store.document(url.searchParams.get('target')||'common',url.searchParams.get('doc')||'resume'));
   if(p==='/api/document'&&req.method==='PUT'){const b=await body(req);const result=await exclusive(()=>store.save(b.target,b.doc,b.markdown,b.version));changed();return json(res,result);}

@@ -12,6 +12,7 @@
     "mcp": "node mcp.mjs",
     "check:agent": "node scripts/check-codex.mjs",
     "check:ui": "node scripts/check-agent-ui.mjs",
+    "check:templates": "node scripts/check-pdf-templates-ui.mjs",
     "codex": "node scripts/sdk-cli.mjs codex",
     "claude": "node scripts/sdk-cli.mjs claude",
     "check:release": "node scripts/check-release.mjs",

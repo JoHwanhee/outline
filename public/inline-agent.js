@@ -22,6 +22,7 @@ export function initInlineAgent({state,api,save,load,toast,documentAI}){
  $('#panel-document').onclick=()=>hiringPanel.openForm().catch(e=>toast(e.message,true));
  $('#agent-document').onclick=()=>open().catch(e=>toast(e.message,true));
  window.addEventListener('outline:document',()=>{visible=true;layout();});
+ window.addEventListener('outline:pdf-templates',()=>{visible=false;documentAI.restore();layout();});
  window.addEventListener('outline:intro-page',()=>{visible=false;documentAI.restore();layout();});
  window.addEventListener('outline:agent-view',()=>{visible=false;documentAI.restore();layout();});window.addEventListener('outline:panel',()=>{visible=false;documentAI.restore();layout();});
  window.addEventListener('outline:document-leaving',()=>{stash();generation++;documentAI.restore();});
