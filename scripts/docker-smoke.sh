@@ -22,6 +22,8 @@ base="http://127.0.0.1:$OUTLINE_PORT"
 curl -fsS "$base/api/setup" | node -e 'let b="";process.stdin.on("data",d=>b+=d).on("end",()=>{if(!JSON.parse(b).required)process.exit(1)})'
 curl -fsS -H 'Content-Type: application/json' -d '{"profile":{"name":"Docker Test"},"targetRole":"Engineer","resume":"## Experience\nSynthetic persistence check"}' "$base/api/setup" >/dev/null
 curl -fsS -H 'Content-Type: application/json' -d '{"name":"Example Company","role":"Engineer"}' "$base/api/company" >/dev/null
+# An unauthenticated container must fail locally with login instructions, without contacting OpenAI.
+"${compose[@]}" exec -T outline node --input-type=module -e 'import assert from "node:assert/strict";import {Store} from "./lib/store.mjs";import {Providers} from "./lib/providers.mjs";import {createSdkClient} from "./lib/sdk-client.mjs";const p=new Providers(new Store(process.env.OUTLINE_DATA_DIR));assert.equal((await p.public()).providers.codex.loginDetected,false);for(const panel of [false,true])await assert.rejects(()=>createSdkClient(p,{sdkProvider:"codex"},{panel}),e=>e.status===401&&e.message.includes("login --device-auth"));'
 # Exercise Korean PDF rendering, the Python runtime and fonts inside the image.
 "${compose[@]}" exec -T outline node --input-type=module -e 'import {Store} from "./lib/store.mjs";import {exportDocument} from "./lib/export.mjs";const s=new Store(process.env.OUTLINE_DATA_DIR);const d=await s.document("common","resume");await exportDocument(s,"common","resume","pdf",d.version);'
 # SDK auth configuration must survive recreation too; this is a dummy file, never a real credential.
@@ -32,4 +34,4 @@ wait_ready
 curl -fsS "$base/api/state" | node -e 'let b="";process.stdin.on("data",d=>b+=d).on("end",()=>{const s=JSON.parse(b);if(s.setup.required||s.profile.name!=="Docker Test"||!s.companies.some(c=>c.name==="Example Company"))process.exit(1)})'
 curl -fsS "$base/api/document?target=common&doc=resume" | node -e 'let b="";process.stdin.on("data",d=>b+=d).on("end",()=>{if(!JSON.parse(b).markdown.includes("Synthetic persistence check"))process.exit(1)})'
 "${compose[@]}" exec -T outline sh -c 'test "$(cat /home/node/.outline-volume-test)" = synthetic'
-echo 'Docker smoke passed: onboarding, PDF, document/company and SDK-home volume persistence.'
+echo 'Docker smoke passed: onboarding, missing-login guard, PDF, document/company and SDK-home volume persistence.'

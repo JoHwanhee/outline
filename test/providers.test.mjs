@@ -5,8 +5,33 @@ import path from 'node:path';
 import os from 'node:os';
 import {Store} from '../lib/store.mjs';
 import {Providers,sumUsage} from '../lib/providers.mjs';
-import {ClaudeClient,claudeUsage} from '../lib/sdk-client.mjs';
+import {ClaudeClient,claudeUsage,createSdkClient} from '../lib/sdk-client.mjs';
 async function fixture(t){const root=await fs.mkdtemp(path.join(os.tmpdir(),'outline-providers-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));return new Providers(new Store(root));}
+test('Docker rejects missing or unusable Codex login before creating chat or panel clients',async t=>{
+ const service=await fixture(t),previous={CODEX_HOME:process.env.CODEX_HOME,OUTLINE_CONTAINER:process.env.OUTLINE_CONTAINER};
+ process.env.CODEX_HOME=path.join(service.store.root,'sdk-home');process.env.OUTLINE_CONTAINER='1';
+ t.after(()=>{for(const [key,value] of Object.entries(previous))if(value===undefined)delete process.env[key];else process.env[key]=value;});
+ await fs.mkdir(process.env.CODEX_HOME);
+ const authFile=path.join(process.env.CODEX_HOME,'auth.json');
+ for(const content of [null,'{',JSON.stringify(null),'{}',JSON.stringify({tokens:{access_token:' '}})]){
+  if(content!==null)await fs.writeFile(authFile,content);
+  assert.equal((await service.public()).providers.codex.loginDetected,false);
+  for(const panel of [false,true])await assert.rejects(()=>createSdkClient(service,{sdkProvider:'codex'},{panel}),error=>error.status===401&&error.message.includes('docker compose exec outline npm run codex -- login --device-auth'));
+ }
+ await service.save({providers:{codex:{authMode:'apiKey',apiKey:'sk-test-container-key'}}});
+ assert.deepEqual(await service.connection('codex'),{authMode:'apiKey',key:'sk-test-container-key'});
+ await service.save({providers:{codex:{authMode:'login'}}});
+ for(const auth of [{tokens:{access_token:'test-access-token'}},{OPENAI_API_KEY:'sk-test-cached-key'}]){
+  await fs.writeFile(authFile,JSON.stringify(auth));
+  const status=await service.public();assert.equal(status.providers.codex.loginDetected,true);
+  assert.equal(JSON.stringify(status).includes('test-access-token'),false);
+  assert.equal(JSON.stringify(status).includes('sk-test-cached-key'),false);
+  assert.deepEqual(await service.connection('codex'),{authMode:'login',key:''});
+ }
+ await fs.unlink(authFile);
+ process.env.OUTLINE_CONTAINER='0';
+ assert.deepEqual(await service.connection('codex'),{authMode:'login',key:''});
+});
 test('provider keys are private, never returned, and model/session choices are isolated',async t=>{const service=await fixture(t);const response=await service.save({defaultProvider:'claude',providers:{codex:{authMode:'apiKey',apiKey:'sk-openai-test-key',model:'gpt-6.1-sol'},claude:{authMode:'apiKey',apiKey:'sk-ant-test-key',model:'claude-sonnet-5-5'}}});assert.equal(JSON.stringify(response).includes('sk-ant'),false);assert.equal(response.providers.claude.hasKey,true);assert.equal((await fs.stat(service.secretFile)).mode&0o777,0o600);assert.equal((await service.choose()).sdkProvider,'claude');const original={sdkProvider:'codex',model:'gpt-6.1-sol'};assert.deepEqual(await service.choose({},original),{...original,providerName:'Codex SDK'});await assert.rejects(()=>service.choose({provider:'claude'},original),{status:409});await assert.rejects(()=>service.choose({provider:'codex',model:'gpt-6-sol'},original),{status:409});await assert.rejects(()=>service.choose({provider:'codex',model:'claude-sonnet-5-5'}),{status:400});assert.equal(await service.scrub(new Error('failed sk-ant-test-key')),'failed [API KEY]');await service.save({providers:{claude:{apiKey:''}}});assert.equal(await service.key('claude'),'sk-ant-test-key');await service.save({providers:{claude:{removeKey:true}}});assert.notEqual(await service.key('claude'),'sk-ant-test-key');});
 test('Claude adapter applies model, restricts tools, resumes and reports usage deltas instead of double counting',async()=>{let captured;const baseline={'claude-sonnet-5-5':{inputTokens:100,outputTokens:20,cacheReadInputTokens:30,cacheCreationInputTokens:10,costUSD:0.01}};const client=new ClaudeClient({key:'test-secret',job:{providerTotals:baseline},mcpServers:{outline:{command:'node',args:[]}},queryImpl:args=>{captured=args;return(async function*(){yield {type:'system',subtype:'init',session_id:'claude-session'};yield {type:'result',subtype:'success',is_error:false,structured_output:{message:'완료'},modelUsage:{'claude-sonnet-5-5':{inputTokens:140,outputTokens:25,cacheReadInputTokens:50,cacheCreationInputTokens:15,costUSD:0.015}}};})();}});const events=[];for await(const e of (await client.resumeThread('claude-session',{workingDirectory:'/tmp',model:'claude-sonnet-5-5'}).runStreamed('request',{outputSchema:{type:'object'},signal:new AbortController().signal})).events)events.push(e);assert.equal(captured.options.model,'claude-sonnet-5-5');assert.equal(captured.options.resume,'claude-session');assert.deepEqual(captured.options.tools,[]);assert.equal(captured.options.strictMcpConfig,true);assert.equal(captured.options.permissionMode,'dontAsk');assert.equal(captured.options.env.ANTHROPIC_API_KEY,'test-secret');assert.equal((await captured.options.canUseTool('Bash',{})).behavior,'deny');assert.equal((await captured.options.canUseTool('mcp__outline__preview_document',{})).behavior,'allow');const usage=events.at(-1).usage;assert.equal(usage.input_tokens,65);assert.equal(usage.output_tokens,5);assert.equal(usage.cached_input_tokens,20);assert.equal(usage.cache_write_input_tokens,5);assert.ok(Math.abs(usage.cost_usd-0.005)<1e-9);assert.equal(JSON.parse(events.at(-2).item.text).message,'완료');assert.equal(sumUsage([usage]).input_tokens,65);assert.equal(claudeUsage(null),null);});
 test('Claude failure preserves reported partial usage and cancellation propagates to query',async()=>{const controller=new AbortController();let aborted=false;const client=new ClaudeClient({key:'x',job:{},queryImpl:({options})=>(async function*(){options.abortController.signal.addEventListener('abort',()=>aborted=true);yield {type:'result',subtype:'error_max_turns',is_error:true,errors:['turn limit'],modelUsage:{m:{inputTokens:4,outputTokens:2}}};})()});const out=[];for await(const e of(await client.startThread({workingDirectory:'/tmp'}).runStreamed('x',{outputSchema:{},signal:controller.signal})).events)out.push(e);assert.equal(out[0].type,'usage.updated');assert.equal(out[0].usage.input_tokens,4);assert.equal(out[1].type,'turn.failed');assert.equal(sumUsage([null,undefined]).reported,0);});

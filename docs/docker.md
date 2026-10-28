@@ -58,3 +58,23 @@ docker compose up -d
 ## AI 실행
 
 Codex/Claude SDK는 이미지 안의 Linux용 실행 파일을 사용합니다. 호스트의 SDK 바이너리나 `node_modules`를 마운트하지 마세요. 도구 실행은 앱이 제한하며 추가적인 privileged 모드나 호스트 Docker 소켓이 필요하도록 구성하지 않았습니다. 관리 환경에서 SDK 샌드박스나 인증 실행이 제한되면 오류를 확인하고 API 키 방식 또는 지원되는 실행 환경을 사용하세요. 모델 접근과 실제 실행 가능 여부는 사용자의 계정·네트워크·호스트 정책에 따릅니다.
+
+### Codex 로그인 오류(401)
+
+호스트에서 Codex가 동작해도 컨테이너의 SDK 홈은 별도 볼륨입니다. `Missing bearer or basic authentication in header`가 표시되면 먼저 Outline 폴더에서 컨테이너의 로그인을 확인하세요.
+
+```sh
+docker compose exec outline npm run codex -- login status
+docker compose exec outline npm run codex -- login --device-auth
+```
+
+기기 인증 안내에 따라 브라우저에서 로그인한 뒤 실패했던 요청을 다시 보내세요. 로그인은 `outline_sdk_home` 볼륨에 저장되므로 컨테이너를 재생성해도 유지됩니다. 앱은 로그인 정보가 없는 상태에서 Codex 요청을 보내지 않습니다. 로그인 정보가 감지돼도 토큰 만료나 접근 권한까지 보장하지는 않습니다.
+
+이미 로컬에 `~/.codex/auth.json`이 있다면 [OpenAI 공식 인증 안내](https://learn.chatgpt.com/docs/auth#fallback-authenticate-locally-and-copy-your-auth-cache)에 따라 해당 파일만 컨테이너로 이전할 수도 있습니다. 아래 명령은 컨테이너의 기존 Codex 인증을 로컬 인증으로 교체하므로 같은 계정으로 사용할 때 실행하세요. 호스트에서 `CODEX_HOME`을 변경했다면 입력 파일 경로도 맞춰주세요.
+
+```sh
+docker compose exec -T outline sh -c 'umask 077; mkdir -p "$CODEX_HOME"; cat > "$CODEX_HOME/auth.json"; chmod 600 "$CODEX_HOME/auth.json"' < ~/.codex/auth.json
+docker compose exec outline npm run codex -- login status
+```
+
+Keychain에만 인증이 있고 파일이 없다면 기기 인증을 사용하세요. 인증 파일은 토큰을 포함하므로 저장소나 Docker 이미지에 넣지 않습니다. API 키를 사용하려면 앱의 **AI 연결 · 사용량**에서 API 키 방식을 선택하고 키를 입력하세요.
